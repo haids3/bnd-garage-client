@@ -67,6 +67,26 @@ class ToggleState:
 
 
 @dataclass(frozen=True, kw_only=True)
+class ActivityLogEntry:
+    """The hub's own record of the most recent action and who performed it.
+
+    `text` already comes fully formed from the hub with attribution baked in
+    (e.g. "Light off by HomeAssistant", "Closed by H S25" for a real phone) -
+    there's no separate attribution field to decode.
+    """
+
+    text: str
+    log_id: int
+    """Unique per entry - compare against a previously seen value to detect
+    a genuinely new entry, since repeated polls return the same one."""
+    logged_at: int
+    """Unix ms timestamp, per the hub's own clock."""
+    alert: int
+    """0 in every entry seen so far; presumably a nonzero fault/alert code
+    in some other circumstance, unconfirmed."""
+
+
+@dataclass(frozen=True, kw_only=True)
 class HubStatus:
     """A snapshot of everything the hub reports for the door in one call."""
 
@@ -79,6 +99,8 @@ class HubStatus:
     presets: tuple[PresetAction, ...] = ()
     light: ToggleState | None = None
     """None if the hub doesn't advertise a light control at all."""
+    activity: ActivityLogEntry | None = None
+    """None if the hub doesn't report a log entry at all."""
 
 
 def status_from_raw(
@@ -88,6 +110,7 @@ def status_from_raw(
     name: str = "",
     presets: tuple[PresetAction, ...] = (),
     light: ToggleState | None = None,
+    activity: ActivityLogEntry | None = None,
 ) -> HubStatus:
     """Classify a coarse DoorState from the hub's raw position/rate pair."""
     if rate != 0:
@@ -107,4 +130,5 @@ def status_from_raw(
         name=name,
         presets=presets,
         light=light,
+        activity=activity,
     )

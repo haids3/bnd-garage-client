@@ -27,7 +27,14 @@ from .const import (
 )
 from .crypto import encrypt_control, sign_hmac
 from .errors import AuthenticationError, HubCommandError, HubUnreachableError
-from .models import Credentials, HubStatus, PresetAction, ToggleState, status_from_raw
+from .models import (
+    ActivityLogEntry,
+    Credentials,
+    HubStatus,
+    PresetAction,
+    ToggleState,
+    status_from_raw,
+)
 from .transport import hub_ssl_context
 
 _NON_PRESET_COMMANDS = frozenset((*CMD_LIGHT_TOGGLE, *CMD_AUXILIARY_RELAY))
@@ -55,6 +62,18 @@ def _split_features(
         elif command not in _NON_PRESET_COMMANDS:
             presets.append(PresetAction(command=command, label=action.get("title", "")))
     return tuple(presets), light
+
+
+def _parse_activity(log: dict[str, Any]) -> ActivityLogEntry | None:
+    """Parse the hub's own last-action log entry, if it reported one."""
+    if not log:
+        return None
+    return ActivityLogEntry(
+        text=log.get("text", ""),
+        log_id=log.get("logId", 0),
+        logged_at=log.get("time", 0),
+        alert=log.get("alert", 0),
+    )
 
 
 class HubClient:
@@ -122,12 +141,14 @@ class HubClient:
                 continue
             device = devices[0].get("device", {})
             presets, light = _split_features(devices[0].get("aux", []))
+            activity = _parse_activity(devices[0].get("log", {}))
             return status_from_raw(
                 position=device.get("position", -1),
                 rate=device.get("rate", 0),
                 name=devices[0].get("name", ""),
                 presets=presets,
                 light=light,
+                activity=activity,
             )
         return status_from_raw(position=-1, rate=0)
 

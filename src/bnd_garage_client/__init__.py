@@ -9,10 +9,18 @@ from .errors import (
     HubUnreachableError,
     PairingError,
 )
-from .models import Credentials, DoorState, HubStatus, PresetAction, ToggleState
+from .models import (
+    ActivityLogEntry,
+    Credentials,
+    DoorState,
+    HubStatus,
+    PresetAction,
+    ToggleState,
+)
 from .pairing import pair_new_phone
 
 __all__ = [
+    "ActivityLogEntry",
     "AmbiguousDeviceError",
     "AuthenticationError",
     "Credentials",

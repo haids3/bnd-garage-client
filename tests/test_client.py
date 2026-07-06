@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from bnd_garage_client.client import _split_features
-from bnd_garage_client.models import PresetAction, ToggleState
+from bnd_garage_client.client import _parse_activity, _split_features
+from bnd_garage_client.models import ActivityLogEntry, PresetAction, ToggleState
 
 
 def test_split_features_empty_list_has_no_presets_or_light() -> None:
@@ -99,3 +99,25 @@ def test_split_features_full_real_world_response() -> None:
         PresetAction(command=7, label="Ventilation"),
     )
     assert light == ToggleState(command=16, is_on=False)
+
+
+def test_parse_activity_returns_none_for_empty_log() -> None:
+    """Test a hub reporting no log entry at all yields None."""
+    assert _parse_activity({}) is None
+
+
+def test_parse_activity_parses_real_world_entry() -> None:
+    """Test the exact shape captured from a real hub."""
+    log = {
+        "text": "Closed by HomeAssistant",
+        "time": 1783233784793,
+        "source": 2,
+        "logId": 774627669198754412,
+        "alert": 0,
+    }
+    assert _parse_activity(log) == ActivityLogEntry(
+        text="Closed by HomeAssistant",
+        log_id=774627669198754412,
+        logged_at=1783233784793,
+        alert=0,
+    )
