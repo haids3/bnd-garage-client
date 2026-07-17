@@ -10,9 +10,11 @@ from enum import StrEnum
 class Credentials:
     """Long-lived credentials for a paired phone, used on every runtime call.
 
-    Everything needed only during the one-time pairing handshake (the RSA
-    keypair, the temporary SDK-side password, the hub's RSA public key) is
-    discarded once pairing completes - it has no further use afterwards.
+    The hub's SDK-side fields (`rsa_key_der_b64`/`sdk_phone_password`/
+    `sdk_secret`) are optional and default to empty: entries paired before
+    those fields existed only support the control API (open/close/stop/
+    status), not the SDK protocol's wider RPC surface. Re-pairing populates
+    them.
     """
 
     hub_id: str
@@ -28,6 +30,25 @@ class Credentials:
     """
     user_password: str
     device_id: str
+    rsa_key_der_b64: str = ""
+    """Base64 PKCS8 DER-encoded RSA private key registered with the hub
+    during pairing's key-upgrade step. Required to sign any SDK-protocol
+    call (`sdk_client.py`) made after the pairing session ends - empty for
+    credentials paired before SDK-protocol support existed."""
+    sdk_phone_password: str = ""
+    """The phone password the SDK protocol's `auth` RPC expects, set once
+    during pairing's key-upgrade step. Distinct from `phone_password`, which
+    is the control API's own credential."""
+    sdk_secret: str = ""
+    """AES key material for the SDK protocol - the ECDH-upgraded secret from
+    pairing's key-upgrade step, distinct from `control_secret`. Required
+    alongside `rsa_key_der_b64` to make any SDK-protocol call."""
+    user_id: str = ""
+    """This account's own user ID, returned by cloud registration during
+    pairing. Some SDK-protocol RPCs (e.g. getNotificationHistory) require
+    the *registering* user's ID specifically - the hub has other user
+    entries too (e.g. a pseudo-user per physical wall button) that a naive
+    "pick any user ID" approach can silently match instead."""
 
 
 class DoorState(StrEnum):
@@ -84,6 +105,25 @@ class ActivityLogEntry:
     alert: int
     """0 in every entry seen so far; presumably a nonzero fault/alert code
     in some other circumstance, unconfirmed."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class NotificationEntry:
+    """One entry from the hub's SDK-protocol notification history.
+
+    Distinct from `ActivityLogEntry`: that one is the control API's single
+    "most recent action" summary bundled into every status fetch, this is
+    the SDK protocol's full history, one call, of everything the hub has
+    ever notified this account about.
+    """
+
+    sent: bool
+    """Whether the hub actually delivered this notification (vs. logging it
+    without sending, e.g. because it was outside a configured time window)."""
+    text: str
+    """Already fully formed by the hub - no separate fields to decode."""
+    time: int
+    """Unix ms timestamp, per the hub's own clock."""
 
 
 @dataclass(frozen=True, kw_only=True)

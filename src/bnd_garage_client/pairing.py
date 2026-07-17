@@ -17,8 +17,6 @@ import json
 import re
 import secrets
 import time
-import uuid
-from collections.abc import Sequence
 from dataclasses import dataclass
 
 import aiohttp
@@ -26,14 +24,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from cryptography.hazmat.primitives.asymmetric import padding as rsa_padding
 
-from .crypto import (
-    decrypt_control,
-    decrypt_pairing_reply,
-    encrypt_control,
-    encrypt_pairing,
-    sign_hmac,
-    sign_rsa,
-)
+from .crypto import decrypt_control, decrypt_pairing_reply, encrypt_control, sign_hmac
 from .errors import (
     AmbiguousDeviceError,
     AuthenticationError,
@@ -41,11 +32,11 @@ from .errors import (
     PairingError,
 )
 from .models import Credentials
+from .sdk_protocol import SdkConnection, try_signing_keys
 from .transport import hub_ssl_context, read_hub_id
 
 _CLOUD_URL = "https://version2.smartdoordevices.com"
 _CONTROL_PORT = 8989
-_PAIRING_PORT = 8991
 
 _CLIENT_NAME = "Home Assistant"
 _PAIRING_HEADERS = {
@@ -94,6 +85,17 @@ class PairingSession:
     def _url(self, port: int) -> str:
         return f"https://{self._host}:{port}"
 
+    def _sdk_conn(self, migrated: _MigratedSecret) -> SdkConnection:
+        return SdkConnection(
+            session=self._session,
+            ssl_context=self._ssl_context,
+            host=self._host,
+            hub_id=self.hub_id,
+            phone_id=self.phone_id,
+            rsa_key_der_b64=migrated.private_key_der_b64,
+            secret=migrated.secret,
+        )
+
     async def pair(self, activation_code: str, user_password: str) -> Credentials:
         """Run the full pairing handshake and return runtime Credentials."""
         self.hub_id = await read_hub_id(self._host)
@@ -131,6 +133,10 @@ class PairingSession:
             control_secret=control_secret,
             user_password=user_password,
             device_id=device_id,
+            rsa_key_der_b64=migrated.private_key_der_b64,
+            sdk_phone_password=pairing_password,
+            sdk_secret=migrated.secret,
+            user_id=user_id,
         )
 
     async def _register_with_cloud(
@@ -311,81 +317,6 @@ class PairingSession:
 
         return _MigratedSecret(private_key_der_b64=rsa_key_der_b64, secret=secret)
 
-    async def _pairing_api_timestamp(self) -> int:
-        """Fetch the hub's own clock for the pairing API, falling back to ours."""
-        try:
-            async with self._session.post(
-                f"{self._url(_PAIRING_PORT)}/sdk/info",
-                ssl=self._ssl_context,
-                headers=_PAIRING_HEADERS,
-                data="",
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as response:
-                if response.status == 200:
-                    hub_clock = (await response.json(content_type=None)).get("mono", 0)
-                    if hub_clock > 0:
-                        return int(hub_clock)
-        except (TimeoutError, aiohttp.ClientError):
-            pass
-        return int(time.time() * 1000)
-
-    async def _send_signed_command(
-        self,
-        migrated: _MigratedSecret,
-        command_json: str,
-        signing_key: str,
-        timestamp: int,
-    ) -> dict:
-        request_id = "req" + uuid.uuid4().hex[:12]
-        encrypted = encrypt_pairing(migrated.secret, str(timestamp), command_json)
-        signing_input = (
-            f"{self.hub_id}:{self.phone_id}:{timestamp}:{request_id}:{encrypted}"
-        )
-        mac = (
-            "NOKEY" if signing_key == "NOKEY" else sign_hmac(signing_key, signing_input)
-        )
-        async with self._session.post(
-            f"{self._url(_PAIRING_PORT)}/sdk/message",
-            ssl=self._ssl_context,
-            headers=_PAIRING_HEADERS,
-            timeout=aiohttp.ClientTimeout(total=15),
-            json={
-                "hubId": self.hub_id,
-                "phoneId": self.phone_id,
-                "requestId": request_id,
-                "time": timestamp,
-                "request": encrypted,
-                "signature": sign_rsa(migrated.private_key_der_b64, signing_input),
-                "mac": mac,
-            },
-        ) as response:
-            return await response.json(content_type=None)
-
-    async def _try_signing_keys(
-        self,
-        migrated: _MigratedSecret,
-        command_json: str,
-        candidate_keys: Sequence[str],
-    ) -> dict:
-        """Try each candidate signing key until the hub accepts one.
-
-        The pairing API doesn't document which key a given command expects,
-        so this is a deliberate empirical fallback, not a guess left in.
-        """
-        for key in candidate_keys:
-            if not key:
-                continue
-            try:
-                timestamp = await self._pairing_api_timestamp()
-                reply = await self._send_signed_command(
-                    migrated, command_json, key, timestamp
-                )
-            except (TimeoutError, aiohttp.ClientError):
-                continue
-            if reply.get("mac") != "INVALID":
-                return reply
-        return {}
-
     async def _authenticate_pairing_session(
         self, migrated: _MigratedSecret, user_password: str, pairing_password: str
     ) -> tuple[str | None, str | None]:
@@ -400,8 +331,10 @@ class PairingSession:
             },
             separators=(",", ":"),
         )
-        reply = await self._try_signing_keys(
-            migrated, command, ("NOKEY", pairing_password, migrated.secret)
+        reply = await try_signing_keys(
+            self._sdk_conn(migrated),
+            command,
+            ("NOKEY", pairing_password, migrated.secret),
         )
         return _extract_session_key(reply, migrated.secret)
 
@@ -425,8 +358,10 @@ class PairingSession:
             {"path": "setUserPassword", "data": data}, separators=(",", ":")
         )
 
-        reply = await self._try_signing_keys(
-            migrated, command, (session_key, pairing_password, migrated.secret, "NOKEY")
+        reply = await try_signing_keys(
+            self._sdk_conn(migrated),
+            command,
+            (session_key, pairing_password, migrated.secret, "NOKEY"),
         )
         decoded = _decode_pairing_reply(reply, migrated.secret)
         if decoded.get("errorCode") == 0:

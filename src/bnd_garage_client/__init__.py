@@ -14,10 +14,12 @@ from .models import (
     Credentials,
     DoorState,
     HubStatus,
+    NotificationEntry,
     PresetAction,
     ToggleState,
 )
 from .pairing import pair_new_phone
+from .sdk_client import SdkClient
 
 __all__ = [
     "ActivityLogEntry",
@@ -30,8 +32,10 @@ __all__ = [
     "HubCommandError",
     "HubStatus",
     "HubUnreachableError",
+    "NotificationEntry",
     "PairingError",
     "PresetAction",
+    "SdkClient",
     "ToggleState",
     "pair_new_phone",
 ]

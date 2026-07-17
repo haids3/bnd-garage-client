@@ -12,6 +12,8 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import json
+from typing import Any
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding as rsa_padding
@@ -79,6 +81,49 @@ def decrypt_pairing_reply(secret: str, ciphertext_b64: str) -> str:
     if 1 <= pad_len <= 16:
         plaintext = plaintext[:-pad_len]
     return plaintext[16:].decode("utf-8", errors="replace")
+
+
+_DATA_VALUE_OPENERS = ('{"', '[{"', '"')
+"""Candidate openings for the `data` value's true type: object, array of
+objects (every list-returning RPC path returns a list of objects), or a
+bare string. Tried in this order against `repair_sdk_reply`'s input."""
+
+
+def repair_sdk_reply(tail: str) -> dict[str, Any] | None:
+    """Reconstruct the full `{"data": ..., "errorCode": ..., ...}` wrapper
+    from a reply already run through `decrypt_pairing_reply`.
+
+    That function discards the garbled first AES block, but for a *reply*
+    (as opposed to a request this client sends) that block always contains
+    the wrapper's opening `{"data":` plus the first few characters of the
+    `data` value itself - so `tail` starts mid-way through data's first
+    field name (object/array) or its content (a bare string), never at a
+    clean boundary. Everything else in the reply decrypted correctly,
+    including data's own closing brace/bracket and the trailing
+    `"appTimeout":...,"errorCode":...,"state":...}` fields - so restoring
+    valid JSON only requires guessing which of those three shapes `data`
+    had. The wrong guesses simply fail to parse (unbalanced brackets or a
+    stray token) rather than silently producing incorrect data.
+
+    For object/array data, only the first field's *key name* is lost (every
+    value survives intact). For a bare string value, it's the string's own
+    leading characters that get eaten instead - so a recovered string is
+    missing several characters at its start, and one short enough to be
+    entirely consumed by the corrupted block can't be recovered at all.
+
+    Returns None if no candidate parses - meaning `data` was `null`/absent
+    (e.g. a Void-returning command), the value was too short to survive,
+    or something unexpected happened; callers should fall back to
+    salvaging individual fields by regex.
+    """
+    for opener in _DATA_VALUE_OPENERS:
+        try:
+            parsed = json.loads(f'{{"data":{opener}{tail}')
+        except ValueError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
 
 
 def sign_hmac(key: str, message: str) -> str:
