@@ -127,6 +127,38 @@ class NotificationEntry:
 
 
 @dataclass(frozen=True, kw_only=True)
+class HubInfo:
+    """The hub's own identity/network info, from the control API's
+    `app/res/base/info` - an older, differently-shaped response than the
+    SDK protocol's `HubInfo`-named RPC result (human-readable string keys
+    like "Hub Name" rather than camelCase field names).
+    """
+
+    name: str
+    ap_name: str
+    """The hub's own WiFi access-point name, e.g. for hotspot-based setup."""
+    serial_number: str
+    """Derived client-side as `ap_name` minus its first 3 characters - the
+    hub itself doesn't report this as a separate field over this endpoint."""
+    version: str
+    firmware: str
+    timezone: str
+    saved_network: str
+    ip_address: str
+    mac_address: str
+    wifi_signal: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class WifiSample:
+    """One point from the control API's WiFi signal history."""
+
+    at: int
+    """Unix ms timestamp, per the hub's own clock."""
+    signal_dbm: int
+
+
+@dataclass(frozen=True, kw_only=True)
 class HubStatus:
     """A snapshot of everything the hub reports for the door in one call."""
 

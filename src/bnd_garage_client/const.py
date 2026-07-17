@@ -10,20 +10,12 @@ from __future__ import annotations
 CONTROL_PORT = 8989
 """Session-based control API: connect, open/close/stop, status, light, presets."""
 
-PAIRING_PORT = 8991
-"""Signed-message API used only for the one-time phone pairing handshake."""
-
 CLOUD_REGISTER_URL = "https://version2.smartdoordevices.com"
 
 CONTROL_HEADERS = {
     "Content-Type": "application/json",
     "version": "2.21.1",
     "app-version": "1.2.3",
-}
-PAIRING_HEADERS = {
-    "Content-Type": "application/json",
-    "sdk": "3.7.0",
-    "platform": "android",
 }
 
 SESSION_LIFETIME_SECONDS = 120
@@ -38,3 +30,19 @@ the light to the opposite state - see ToggleState."""
 CMD_AUXILIARY_RELAY = (18, 19)
 """A second toggle slot, confirmed inert (accepted, no observable effect) on
 every hub tested so far - excluded from presets but not yet a feature either."""
+
+PARAM_LIGHT_TIME_SEC = 0
+PARAM_AUTO_CLOSE_SEC = 1
+PARAM_PE_AUTO_CLOSE_SEC = 2
+PARAM_AUX_OUTPUT_TIME_SEC = 3
+PARAM_TRIGGER_MODE = 16
+
+ADVANCED_PARAMETER_FIELDS = {
+    PARAM_LIGHT_TIME_SEC: "parameterLightTime",
+    PARAM_AUTO_CLOSE_SEC: "parameterAutoCloseTime",
+    PARAM_PE_AUTO_CLOSE_SEC: "parameterPEAutoCloseTime",
+    PARAM_AUX_OUTPUT_TIME_SEC: "parameterAuxOutputTime",
+    PARAM_TRIGGER_MODE: "triggerMode",
+}
+"""The control API's `app/res/devices/edit` wants a differently-named JSON
+field per parameter, unlike the SDK protocol's generic {code, value} shape."""

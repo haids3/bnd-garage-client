@@ -16,6 +16,7 @@ from typing import Any, Self
 import aiohttp
 
 from .const import (
+    ADVANCED_PARAMETER_FIELDS,
     CMD_AUXILIARY_RELAY,
     CMD_CLOSE,
     CMD_LIGHT_TOGGLE,
@@ -30,9 +31,11 @@ from .errors import AuthenticationError, HubCommandError, HubUnreachableError
 from .models import (
     ActivityLogEntry,
     Credentials,
+    HubInfo,
     HubStatus,
     PresetAction,
     ToggleState,
+    WifiSample,
     status_from_raw,
 )
 from .transport import hub_ssl_context
@@ -74,6 +77,68 @@ def _parse_activity(log: dict[str, Any]) -> ActivityLogEntry | None:
         logged_at=log.get("time", 0),
         alert=log.get("alert", 0),
     )
+
+
+_LOG_TYPES_HIDDEN_BY_VENDOR_APP = frozenset((0, 21))
+"""logType values the vendor app itself filters out of the log view - unclear
+what they represent, just noise it doesn't show either."""
+
+
+def _parse_device_logs(logs: list[dict[str, Any]]) -> list[ActivityLogEntry]:
+    """Parse `app/res/log`'s full log history into the same shape as
+    `_parse_activity`'s single entry - same fields, just many of them.
+    """
+    return [
+        ActivityLogEntry(
+            text=entry.get("text", ""),
+            log_id=entry.get("logId", 0),
+            logged_at=entry.get("time", 0),
+            alert=entry.get("alert", 0),
+        )
+        for entry in logs
+        if entry.get("logType") not in _LOG_TYPES_HIDDEN_BY_VENDOR_APP
+    ]
+
+
+def _hub_info_from_raw(data: dict[str, Any]) -> HubInfo:
+    """Parse `app/res/base/info`'s human-readable-key response shape."""
+    ap_name = data.get("AP Name", "")
+    return HubInfo(
+        name=data.get("Hub Name", ""),
+        ap_name=ap_name,
+        serial_number=ap_name[3:],
+        version=data.get("Hub Version", ""),
+        firmware=data.get("Hub Firmware", ""),
+        timezone=data.get("Timezone", ""),
+        saved_network=data.get("Saved Network", ""),
+        ip_address=data.get("IP Address", ""),
+        mac_address=data.get("MAC Address", ""),
+        wifi_signal=data.get("Wi-Fi Signal", ""),
+    )
+
+
+def _action_for_command(command: int) -> dict[str, int]:
+    """Build the `action` field for `send_command` - see its docstring for why
+    codes >= 256 need a different shape than everything else.
+    """
+    if command >= 256:
+        return {"base": command - 256}
+    return {"cmd": command}
+
+
+def _parse_wifi_diagnostics(samples: list[dict[str, Any]]) -> list[WifiSample]:
+    """Parse `app/res/network/diagnostics`'s `{x, y}` sample array.
+
+    The vendor SDK's own decompiled parser for this endpoint looked like it
+    had a bug (each sample built but never appended to the returned list) -
+    live-tested against a real hub and it isn't one here: real samples come
+    back fine. Left as a note in case it turns out to be hub/firmware-
+    version-dependent after all.
+    """
+    return [
+        WifiSample(at=sample.get("x", 0), signal_dbm=sample.get("y", 0))
+        for sample in samples
+    ]
 
 
 class HubClient:
@@ -152,6 +217,56 @@ class HubClient:
             )
         return status_from_raw(position=-1, rate=0)
 
+    async def get_hub_info(self) -> HubInfo | None:
+        """Fetch the hub's own identity/network info (name, firmware, WiFi, ...)."""
+        request = json.dumps({}, separators=(",", ":"))
+        for message in await self._call("app/res/base/info", request):
+            if message.get("processState") != 0:
+                continue
+            return _hub_info_from_raw(json.loads(message.get("data", "{}")))
+        return None
+
+    async def get_device_logs(self) -> list[ActivityLogEntry]:
+        """Fetch the device's full log history (auto-close, faults, etc.)."""
+        request = json.dumps(
+            {"deviceId": self._credentials.device_id}, separators=(",", ":")
+        )
+        for message in await self._call("app/res/log", request):
+            if message.get("processState") != 0:
+                continue
+            body = json.loads(message.get("data", "{}"))
+            return _parse_device_logs(body.get("logs", []))
+        return []
+
+    async def get_wifi_diagnostics(self) -> list[WifiSample]:
+        """Fetch the hub's recent WiFi signal-strength history."""
+        request = json.dumps({}, separators=(",", ":"))
+        for message in await self._call("app/res/network/diagnostics", request):
+            if message.get("processState") != 0:
+                continue
+            raw = json.loads(message.get("data", "[]"))
+            return _parse_wifi_diagnostics(raw if isinstance(raw, list) else [])
+        return []
+
+    async def set_advanced_parameter(self, code: int, value: int) -> None:
+        """Set one of the device's advanced parameters.
+
+        `code` is one of the `PARAM_*` constants in const.py (e.g.
+        `PARAM_AUTO_CLOSE_SEC`). The control API expects a differently-named
+        JSON field per parameter rather than a generic `{code, value}` pair -
+        that shape is only used by the SDK protocol's equivalent RPC.
+        """
+        field = ADVANCED_PARAMETER_FIELDS.get(code)
+        if field is None:
+            raise ValueError(f"unknown advanced parameter code: {code}")
+        request = json.dumps(
+            {"deviceId": self._credentials.device_id, field: value},
+            separators=(",", ":"),
+        )
+        for message in await self._call("app/res/devices/edit", request):
+            if message.get("processState") == -1:
+                _raise_for_error(message)
+
     async def open_door(self) -> None:
         """Open the garage door."""
         await self.send_command(CMD_OPEN)
@@ -169,9 +284,14 @@ class HubClient:
 
         `command` values for presets/light come from a prior `get_status()`
         call's `HubStatus.presets`/`.light`, not from anything fixed here.
+
+        Codes >= 256 (e.g. the phone-lockout toggle) don't fit in the
+        `action.cmd` field the hub expects for everything else - the vendor
+        SDK splits them into `action.base = command - 256` instead.
         """
+        action = _action_for_command(command)
         request = json.dumps(
-            {"deviceId": self._credentials.device_id, "action": {"cmd": command}},
+            {"deviceId": self._credentials.device_id, "action": action},
             separators=(",", ":"),
         )
         messages = await self._call("app/res/action", request)
