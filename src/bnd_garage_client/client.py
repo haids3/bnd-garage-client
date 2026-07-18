@@ -21,9 +21,15 @@ from .const import (
     CMD_CLOSE,
     CMD_LIGHT_TOGGLE,
     CMD_OPEN,
+    CMD_PHONE_LOCKOUT,
+    CMD_REMOTE_CONTROL_LOCKOUT,
     CMD_STOP,
     CONTROL_HEADERS,
     CONTROL_PORT,
+    PERCENT_OPEN_CMD_BASE,
+    PERCENT_OPEN_MAX,
+    PERCENT_OPEN_MIN,
+    PERCENT_OPEN_STEP,
     SESSION_LIFETIME_SECONDS,
 )
 from .crypto import encrypt_control, sign_hmac
@@ -126,6 +132,22 @@ def _action_for_command(command: int) -> dict[str, int]:
     return {"cmd": command}
 
 
+def _percent_open_command(percent: int) -> int:
+    """Convert a percent-open target into its `send_command` code.
+
+    Live-tested against a real hub: 50 -> cmd 41 -> door settled at
+    position 49 (mechanical tolerance, not a formula error).
+    """
+    if percent % PERCENT_OPEN_STEP != 0 or not (
+        PERCENT_OPEN_MIN <= percent <= PERCENT_OPEN_MAX
+    ):
+        raise ValueError(
+            f"percent must be a multiple of {PERCENT_OPEN_STEP} between "
+            f"{PERCENT_OPEN_MIN} and {PERCENT_OPEN_MAX}, got {percent}"
+        )
+    return PERCENT_OPEN_CMD_BASE + percent // PERCENT_OPEN_STEP
+
+
 def _parse_wifi_diagnostics(samples: list[dict[str, Any]]) -> list[WifiSample]:
     """Parse `app/res/network/diagnostics`'s `{x, y}` sample array.
 
@@ -214,6 +236,8 @@ class HubClient:
                 presets=presets,
                 light=light,
                 activity=activity,
+                remote_control_lockout=device.get("remoteControlLockoutOn"),
+                phone_lockout=device.get("phoneLockoutOn"),
             )
         return status_from_raw(position=-1, rate=0)
 
@@ -278,6 +302,34 @@ class HubClient:
     async def stop_door(self) -> None:
         """Stop the garage door mid-travel."""
         await self.send_command(CMD_STOP)
+
+    async def set_open_percent(self, percent: int) -> None:
+        """Move the door to an exact percent-open position.
+
+        `percent` must be a multiple of 5 between 5 and 95 inclusive - the
+        hub doesn't support arbitrary values, only this fixed step size.
+        Raises ValueError for anything else; requires the door's
+        `openPercentageSupported` capability, which this method doesn't
+        check itself (not currently surfaced on `HubStatus`).
+        """
+        await self.send_command(_percent_open_command(percent))
+
+    async def set_remote_control_lockout(self, enabled: bool) -> None:
+        """Enable/disable physical remotes and wall buttons.
+
+        Live-tested: has no effect on app-protocol control either way.
+        """
+        await self.send_command(
+            CMD_REMOTE_CONTROL_LOCKOUT[0 if enabled else 1]
+        )
+
+    async def set_phone_lockout(self, enabled: bool) -> None:
+        """Enable/disable app-protocol control (open/close/stop/etc).
+
+        Status reads keep working regardless. Live-tested: turning this
+        back off is never itself blocked by the lockout.
+        """
+        await self.send_command(CMD_PHONE_LOCKOUT[0 if enabled else 1])
 
     async def send_command(self, command: int) -> None:
         """Send a raw command code - used for the light toggle and any preset.

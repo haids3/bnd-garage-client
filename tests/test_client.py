@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import pytest
+
 from bnd_garage_client.client import (
     _action_for_command,
     _hub_info_from_raw,
     _parse_activity,
     _parse_device_logs,
     _parse_wifi_diagnostics,
+    _percent_open_command,
     _split_features,
 )
 from bnd_garage_client.models import (
@@ -204,3 +207,19 @@ def test_action_for_command_uses_base_at_or_above_256() -> None:
     """Test codes >= 256 (e.g. PHONE_LOCKOUT_ON = 258) split into {base}."""
     assert _action_for_command(258) == {"base": 2}
     assert _action_for_command(256) == {"base": 0}
+
+
+@pytest.mark.parametrize(
+    ("percent", "expected_cmd"),
+    [(5, 32), (50, 41), (95, 50)],
+)
+def test_percent_open_command_matches_formula(percent: int, expected_cmd: int) -> None:
+    """Test the percent->cmd formula, pinned against the live-tested 50%->41 case."""
+    assert _percent_open_command(percent) == expected_cmd
+
+
+@pytest.mark.parametrize("percent", [0, 4, 6, 96, 100, -5])
+def test_percent_open_command_rejects_invalid_values(percent: int) -> None:
+    """Test values outside 5-95 or not a multiple of 5 are rejected."""
+    with pytest.raises(ValueError, match="percent must be"):
+        _percent_open_command(percent)

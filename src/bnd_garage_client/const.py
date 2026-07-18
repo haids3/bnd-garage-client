@@ -30,6 +30,21 @@ the light to the opposite state - see ToggleState."""
 CMD_AUXILIARY_RELAY = (18, 19)
 """A second toggle slot, confirmed inert (accepted, no observable effect) on
 every hub tested so far - excluded from presets but not yet a feature either."""
+CMD_REMOTE_CONTROL_LOCKOUT = (20, 21)
+"""(on, off) - disables/re-enables physical remotes and wall buttons. Live-
+tested: does not affect app-protocol control at all."""
+CMD_PHONE_LOCKOUT = (258, 257)
+"""(on, off) - disables/re-enables app-protocol control (open/close/stop
+etc; status reads still work). Uses the >=256 `action.base` encoding, not
+`action.cmd` - see `_action_for_command`. Live-tested: turning it back off
+is never itself blocked by the lockout, so there's no bricking risk."""
+
+PERCENT_OPEN_MIN = 5
+PERCENT_OPEN_MAX = 95
+PERCENT_OPEN_STEP = 5
+PERCENT_OPEN_CMD_BASE = 31
+"""`cmd = PERCENT_OPEN_CMD_BASE + percent // PERCENT_OPEN_STEP` - e.g. 50%
+-> cmd 41. Live-tested against a real hub (50% -> position 49)."""
 
 PARAM_LIGHT_TIME_SEC = 0
 PARAM_AUTO_CLOSE_SEC = 1

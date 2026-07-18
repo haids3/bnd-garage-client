@@ -173,6 +173,13 @@ class HubStatus:
     """None if the hub doesn't advertise a light control at all."""
     activity: ActivityLogEntry | None = None
     """None if the hub doesn't report a log entry at all."""
+    remote_control_lockout: bool | None = None
+    """Whether physical remotes/wall buttons are currently locked out. None
+    if the hub doesn't report this field at all."""
+    phone_lockout: bool | None = None
+    """Whether app-protocol control (open/close/stop) is currently locked
+    out - status reads still work regardless. None if the hub doesn't
+    report this field at all."""
 
 
 def status_from_raw(
@@ -183,6 +190,8 @@ def status_from_raw(
     presets: tuple[PresetAction, ...] = (),
     light: ToggleState | None = None,
     activity: ActivityLogEntry | None = None,
+    remote_control_lockout: bool | None = None,
+    phone_lockout: bool | None = None,
 ) -> HubStatus:
     """Classify a coarse DoorState from the hub's raw position/rate pair."""
     if rate != 0:
@@ -203,4 +212,6 @@ def status_from_raw(
         presets=presets,
         light=light,
         activity=activity,
+        remote_control_lockout=remote_control_lockout,
+        phone_lockout=phone_lockout,
     )

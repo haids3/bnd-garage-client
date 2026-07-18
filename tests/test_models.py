@@ -45,3 +45,19 @@ def test_status_threads_through_presets_and_light() -> None:
     status = status_from_raw(position=0, rate=0, presets=presets, light=light)
     assert status.presets == presets
     assert status.light == light
+
+
+def test_status_defaults_lockouts_to_none() -> None:
+    """Test a hub that doesn't report lockout fields yields None, not False."""
+    status = status_from_raw(position=0, rate=0)
+    assert status.remote_control_lockout is None
+    assert status.phone_lockout is None
+
+
+def test_status_threads_through_lockouts() -> None:
+    """Test lockout state passed in is carried onto the resulting HubStatus."""
+    status = status_from_raw(
+        position=0, rate=0, remote_control_lockout=True, phone_lockout=False
+    )
+    assert status.remote_control_lockout is True
+    assert status.phone_lockout is False
