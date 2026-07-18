@@ -32,19 +32,24 @@ def test_status_from_raw(position: int, rate: int, expected_state: DoorState) ->
 
 
 def test_status_defaults_to_no_presets_or_light() -> None:
-    """Test a hub with no feature entries reports empty presets and no light."""
+    """Test a hub with no feature entries reports no presets/light/auxiliary."""
     status = status_from_raw(position=0, rate=0)
     assert status.presets == ()
     assert status.light is None
+    assert status.auxiliary is None
 
 
 def test_status_threads_through_presets_and_light() -> None:
-    """Test presets/light passed in are carried onto the resulting HubStatus."""
+    """Test presets/light/auxiliary passed in are carried onto the HubStatus."""
     presets = (PresetAction(command=5, label="Pet"),)
     light = ToggleState(command=16, is_on=False)
-    status = status_from_raw(position=0, rate=0, presets=presets, light=light)
+    auxiliary = ToggleState(command=18, is_on=False)
+    status = status_from_raw(
+        position=0, rate=0, presets=presets, light=light, auxiliary=auxiliary
+    )
     assert status.presets == presets
     assert status.light == light
+    assert status.auxiliary == auxiliary
 
 
 def test_status_defaults_lockouts_to_none() -> None:

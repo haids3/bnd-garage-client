@@ -171,6 +171,10 @@ class HubStatus:
     presets: tuple[PresetAction, ...] = ()
     light: ToggleState | None = None
     """None if the hub doesn't advertise a light control at all."""
+    auxiliary: ToggleState | None = None
+    """The auxiliary relay toggle. None if the hub doesn't advertise one at
+    all - not the same as it having no observable effect, which turned out
+    to be a hub-side 0-second output-duration setting, not a broken relay."""
     activity: ActivityLogEntry | None = None
     """None if the hub doesn't report a log entry at all."""
     remote_control_lockout: bool | None = None
@@ -189,6 +193,7 @@ def status_from_raw(
     name: str = "",
     presets: tuple[PresetAction, ...] = (),
     light: ToggleState | None = None,
+    auxiliary: ToggleState | None = None,
     activity: ActivityLogEntry | None = None,
     remote_control_lockout: bool | None = None,
     phone_lockout: bool | None = None,
@@ -211,6 +216,7 @@ def status_from_raw(
         name=name,
         presets=presets,
         light=light,
+        auxiliary=auxiliary,
         activity=activity,
         remote_control_lockout=remote_control_lockout,
         phone_lockout=phone_lockout,

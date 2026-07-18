@@ -46,31 +46,34 @@ from .models import (
 )
 from .transport import hub_ssl_context
 
-_NON_PRESET_COMMANDS = frozenset((*CMD_LIGHT_TOGGLE, *CMD_AUXILIARY_RELAY))
-
 
 def _split_features(
     actions: list[dict[str, Any]],
-) -> tuple[tuple[PresetAction, ...], ToggleState | None]:
-    """Split the hub's feature list into named position presets and the light toggle.
+) -> tuple[tuple[PresetAction, ...], ToggleState | None, ToggleState | None]:
+    """Split the hub's feature list into position presets, the light toggle,
+    and the auxiliary relay toggle.
 
-    An "auxiliary" relay slot (a separate pair of toggle commands) also
-    appears in this list on hubs that expose it, but is deliberately not
-    surfaced here: every hub tested so far accepts commands for it without
-    error yet shows no observable effect, so there's nothing to build a
-    feature around yet.
+    The auxiliary relay showing no observable effect on earlier hubs tested
+    turned out to be a hub-side configuration issue (its output duration set
+    to 0 seconds), not the relay being genuinely unwired - it behaves like a
+    second light-style toggle once configured with a real duration.
     """
     presets: list[PresetAction] = []
     light: ToggleState | None = None
+    auxiliary: ToggleState | None = None
     for action in actions:
         command = action.get("action", {}).get("cmd")
         if command is None:
             continue
         if command in CMD_LIGHT_TOGGLE:
             light = ToggleState(command=command, is_on=command == CMD_LIGHT_TOGGLE[1])
-        elif command not in _NON_PRESET_COMMANDS:
+        elif command in CMD_AUXILIARY_RELAY:
+            auxiliary = ToggleState(
+                command=command, is_on=command == CMD_AUXILIARY_RELAY[1]
+            )
+        else:
             presets.append(PresetAction(command=command, label=action.get("title", "")))
-    return tuple(presets), light
+    return tuple(presets), light, auxiliary
 
 
 def _parse_activity(log: dict[str, Any]) -> ActivityLogEntry | None:
@@ -227,7 +230,7 @@ class HubClient:
             if not devices:
                 continue
             device = devices[0].get("device", {})
-            presets, light = _split_features(devices[0].get("aux", []))
+            presets, light, auxiliary = _split_features(devices[0].get("aux", []))
             activity = _parse_activity(devices[0].get("log", {}))
             return status_from_raw(
                 position=device.get("position", -1),
@@ -235,6 +238,7 @@ class HubClient:
                 name=devices[0].get("name", ""),
                 presets=presets,
                 light=light,
+                auxiliary=auxiliary,
                 activity=activity,
                 remote_control_lockout=device.get("remoteControlLockoutOn"),
                 phone_lockout=device.get("phoneLockoutOn"),

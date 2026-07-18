@@ -28,8 +28,10 @@ CMD_LIGHT_TOGGLE = (16, 17)
 """Whichever of these two the hub currently lists is the action that flips
 the light to the opposite state - see ToggleState."""
 CMD_AUXILIARY_RELAY = (18, 19)
-"""A second toggle slot, confirmed inert (accepted, no observable effect) on
-every hub tested so far - excluded from presets but not yet a feature either."""
+"""(on, off) - a second toggle slot, same shape as the light. Showed no
+observable effect on earlier hubs tested, but that turned out to be a
+hub-side `PARAM_AUX_OUTPUT_TIME_SEC` of 0 seconds, not a broken/unwired
+relay - behaves like a real toggle once that duration is set to nonzero."""
 CMD_REMOTE_CONTROL_LOCKOUT = (20, 21)
 """(on, off) - disables/re-enables physical remotes and wall buttons. Live-
 tested: does not affect app-protocol control at all."""

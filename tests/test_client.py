@@ -24,9 +24,10 @@ from bnd_garage_client.models import (
 
 def test_split_features_empty_list_has_no_presets_or_light() -> None:
     """Test a hub reporting no feature entries at all yields empty results."""
-    presets, light = _split_features([])
+    presets, light, auxiliary = _split_features([])
     assert presets == ()
     assert light is None
+    assert auxiliary is None
 
 
 def test_split_features_extracts_named_position_presets() -> None:
@@ -36,32 +37,47 @@ def test_split_features_extracts_named_position_presets() -> None:
         {"action": {"cmd": 6}, "title": "Parcel"},
         {"action": {"cmd": 7}, "title": "Ventilation"},
     ]
-    presets, light = _split_features(actions)
+    presets, light, auxiliary = _split_features(actions)
     assert presets == (
         PresetAction(command=5, label="Pet"),
         PresetAction(command=6, label="Parcel"),
         PresetAction(command=7, label="Ventilation"),
     )
     assert light is None
+    assert auxiliary is None
 
 
 def test_split_features_light_off_when_cmd_16_listed() -> None:
     """Test cmd 16 (the "turn on" action) means the light is currently off."""
-    _, light = _split_features([{"action": {"cmd": 16}, "title": "Light"}])
+    _, light, _ = _split_features([{"action": {"cmd": 16}, "title": "Light"}])
     assert light == ToggleState(command=16, is_on=False)
 
 
 def test_split_features_light_on_when_cmd_17_listed() -> None:
     """Test cmd 17 (the "turn off" action) means the light is currently on."""
-    _, light = _split_features([{"action": {"cmd": 17}, "title": "Light"}])
+    _, light, _ = _split_features([{"action": {"cmd": 17}, "title": "Light"}])
     assert light == ToggleState(command=17, is_on=True)
 
 
 def test_split_features_excludes_auxiliary_relay_from_presets() -> None:
     """Test the auxiliary relay (cmd 18/19) isn't surfaced as a position preset."""
-    presets, light = _split_features([{"action": {"cmd": 18}, "title": "Auxiliary"}])
+    presets, _, auxiliary = _split_features(
+        [{"action": {"cmd": 18}, "title": "Auxiliary"}]
+    )
     assert presets == ()
-    assert light is None
+    assert auxiliary == ToggleState(command=18, is_on=False)
+
+
+def test_split_features_auxiliary_off_when_cmd_18_listed() -> None:
+    """Test cmd 18 (the "turn on" action) means auxiliary is currently off."""
+    _, _, auxiliary = _split_features([{"action": {"cmd": 18}, "title": "Auxiliary"}])
+    assert auxiliary == ToggleState(command=18, is_on=False)
+
+
+def test_split_features_auxiliary_on_when_cmd_19_listed() -> None:
+    """Test cmd 19 (the "turn off" action) means auxiliary is currently on."""
+    _, _, auxiliary = _split_features([{"action": {"cmd": 19}, "title": "Auxiliary"}])
+    assert auxiliary == ToggleState(command=19, is_on=True)
 
 
 def test_split_features_full_real_world_response() -> None:
@@ -108,13 +124,14 @@ def test_split_features_full_real_world_response() -> None:
             "row": 2,
         },
     ]
-    presets, light = _split_features(actions)
+    presets, light, auxiliary = _split_features(actions)
     assert presets == (
         PresetAction(command=5, label="Pet"),
         PresetAction(command=6, label="Parcel"),
         PresetAction(command=7, label="Ventilation"),
     )
     assert light == ToggleState(command=16, is_on=False)
+    assert auxiliary == ToggleState(command=18, is_on=False)
 
 
 def test_parse_activity_returns_none_for_empty_log() -> None:
