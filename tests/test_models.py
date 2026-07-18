@@ -53,16 +53,21 @@ def test_status_threads_through_presets_and_light() -> None:
 
 
 def test_status_defaults_lockouts_to_none() -> None:
-    """Test a hub that doesn't report lockout fields yields None, not False."""
+    """Test a hub with no "Lockout" aux entries at all yields None for both."""
     status = status_from_raw(position=0, rate=0)
     assert status.remote_control_lockout is None
     assert status.phone_lockout is None
 
 
 def test_status_threads_through_lockouts() -> None:
-    """Test lockout state passed in is carried onto the resulting HubStatus."""
+    """Test lockout toggle state passed in is carried onto the HubStatus."""
+    remote_control_lockout = ToggleState(command=20, is_on=False)
+    phone_lockout = ToggleState(command=258, is_on=False)
     status = status_from_raw(
-        position=0, rate=0, remote_control_lockout=True, phone_lockout=False
+        position=0,
+        rate=0,
+        remote_control_lockout=remote_control_lockout,
+        phone_lockout=phone_lockout,
     )
-    assert status.remote_control_lockout is True
-    assert status.phone_lockout is False
+    assert status.remote_control_lockout == remote_control_lockout
+    assert status.phone_lockout == phone_lockout

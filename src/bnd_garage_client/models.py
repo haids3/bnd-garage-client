@@ -177,13 +177,14 @@ class HubStatus:
     to be a hub-side 0-second output-duration setting, not a broken relay."""
     activity: ActivityLogEntry | None = None
     """None if the hub doesn't report a log entry at all."""
-    remote_control_lockout: bool | None = None
-    """Whether physical remotes/wall buttons are currently locked out. None
-    if the hub doesn't report this field at all."""
-    phone_lockout: bool | None = None
-    """Whether app-protocol control (open/close/stop) is currently locked
-    out - status reads still work regardless. None if the hub doesn't
-    report this field at all."""
+    remote_control_lockout: ToggleState | None = None
+    """Locks out physical remotes/wall buttons - same toggle-slot mechanism
+    as `light`/`auxiliary`, not a separate status field. None if the hub
+    doesn't advertise it at all. Has no effect on app-protocol control."""
+    phone_lockout: ToggleState | None = None
+    """Locks out app-protocol control (open/close/stop/etc) - status reads
+    still work regardless. Same toggle-slot mechanism as `light`/
+    `auxiliary`. None if the hub doesn't advertise it at all."""
 
 
 def status_from_raw(
@@ -195,8 +196,8 @@ def status_from_raw(
     light: ToggleState | None = None,
     auxiliary: ToggleState | None = None,
     activity: ActivityLogEntry | None = None,
-    remote_control_lockout: bool | None = None,
-    phone_lockout: bool | None = None,
+    remote_control_lockout: ToggleState | None = None,
+    phone_lockout: ToggleState | None = None,
 ) -> HubStatus:
     """Classify a coarse DoorState from the hub's raw position/rate pair."""
     if rate != 0:

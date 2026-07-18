@@ -22,12 +22,11 @@ from bnd_garage_client.models import (
 )
 
 
-def test_split_features_empty_list_has_no_presets_or_light() -> None:
+def test_split_features_empty_list_has_no_presets_or_toggles() -> None:
     """Test a hub reporting no feature entries at all yields empty results."""
-    presets, light, auxiliary = _split_features([])
+    presets, toggles = _split_features([])
     assert presets == ()
-    assert light is None
-    assert auxiliary is None
+    assert toggles == (None, None, None, None)
 
 
 def test_split_features_extracts_named_position_presets() -> None:
@@ -37,31 +36,30 @@ def test_split_features_extracts_named_position_presets() -> None:
         {"action": {"cmd": 6}, "title": "Parcel"},
         {"action": {"cmd": 7}, "title": "Ventilation"},
     ]
-    presets, light, auxiliary = _split_features(actions)
+    presets, toggles = _split_features(actions)
     assert presets == (
         PresetAction(command=5, label="Pet"),
         PresetAction(command=6, label="Parcel"),
         PresetAction(command=7, label="Ventilation"),
     )
-    assert light is None
-    assert auxiliary is None
+    assert toggles == (None, None, None, None)
 
 
 def test_split_features_light_off_when_cmd_16_listed() -> None:
     """Test cmd 16 (the "turn on" action) means the light is currently off."""
-    _, light, _ = _split_features([{"action": {"cmd": 16}, "title": "Light"}])
+    _, (light, _, _, _) = _split_features([{"action": {"cmd": 16}, "title": "Light"}])
     assert light == ToggleState(command=16, is_on=False)
 
 
 def test_split_features_light_on_when_cmd_17_listed() -> None:
     """Test cmd 17 (the "turn off" action) means the light is currently on."""
-    _, light, _ = _split_features([{"action": {"cmd": 17}, "title": "Light"}])
+    _, (light, _, _, _) = _split_features([{"action": {"cmd": 17}, "title": "Light"}])
     assert light == ToggleState(command=17, is_on=True)
 
 
 def test_split_features_excludes_auxiliary_relay_from_presets() -> None:
     """Test the auxiliary relay (cmd 18/19) isn't surfaced as a position preset."""
-    presets, _, auxiliary = _split_features(
+    presets, (_, auxiliary, _, _) = _split_features(
         [{"action": {"cmd": 18}, "title": "Auxiliary"}]
     )
     assert presets == ()
@@ -70,18 +68,61 @@ def test_split_features_excludes_auxiliary_relay_from_presets() -> None:
 
 def test_split_features_auxiliary_off_when_cmd_18_listed() -> None:
     """Test cmd 18 (the "turn on" action) means auxiliary is currently off."""
-    _, _, auxiliary = _split_features([{"action": {"cmd": 18}, "title": "Auxiliary"}])
+    _, (_, auxiliary, _, _) = _split_features(
+        [{"action": {"cmd": 18}, "title": "Auxiliary"}]
+    )
     assert auxiliary == ToggleState(command=18, is_on=False)
 
 
 def test_split_features_auxiliary_on_when_cmd_19_listed() -> None:
     """Test cmd 19 (the "turn off" action) means auxiliary is currently on."""
-    _, _, auxiliary = _split_features([{"action": {"cmd": 19}, "title": "Auxiliary"}])
+    _, (_, auxiliary, _, _) = _split_features(
+        [{"action": {"cmd": 19}, "title": "Auxiliary"}]
+    )
     assert auxiliary == ToggleState(command=19, is_on=True)
 
 
+def test_split_features_excludes_remote_control_lockout_from_presets() -> None:
+    """Test the "Lockout" aux entry (cmd 20/21) isn't surfaced as a preset button."""
+    presets, (_, _, remote_control_lockout, _) = _split_features(
+        [{"action": {"cmd": 20}, "title": "Lockout"}]
+    )
+    assert presets == ()
+    assert remote_control_lockout == ToggleState(command=20, is_on=False)
+
+
+def test_split_features_remote_control_lockout_on_when_cmd_21_listed() -> None:
+    """Test cmd 21 (the "turn off" action) means it's currently locked out."""
+    _, (_, _, remote_control_lockout, _) = _split_features(
+        [{"action": {"cmd": 21}, "title": "Lockout"}]
+    )
+    assert remote_control_lockout == ToggleState(command=21, is_on=True)
+
+
+def test_split_features_phone_lockout_uses_base_encoding_not_cmd() -> None:
+    """Test the phone-lockout aux entry, encoded as {"base": N} (N = cmd - 256)
+    rather than {"cmd": N} since its command codes are >= 256 - and isn't
+    surfaced as a preset button either.
+    """
+    presets, (_, _, _, phone_lockout) = _split_features(
+        [{"action": {"base": 2}, "title": "Lockout"}]
+    )
+    assert presets == ()
+    assert phone_lockout == ToggleState(command=258, is_on=False)
+
+
+def test_split_features_phone_lockout_on_when_base_1_listed() -> None:
+    """Test base=1 (cmd 257, the "turn off" action) means it's currently locked out."""
+    _, (_, _, _, phone_lockout) = _split_features(
+        [{"action": {"base": 1}, "title": "Lockout"}]
+    )
+    assert phone_lockout == ToggleState(command=257, is_on=True)
+
+
 def test_split_features_full_real_world_response() -> None:
-    """Test the exact shape captured from a real hub."""
+    """Test the exact shape captured from a real hub, including both
+    "Lockout" entries sharing a title but using different encodings.
+    """
     actions = [
         {
             "action": {"cmd": 5},
@@ -123,8 +164,25 @@ def test_split_features_full_real_world_response() -> None:
             "hide": -1,
             "row": 2,
         },
+        {
+            "action": {"cmd": 20},
+            "icon": "1452",
+            "col": 1,
+            "title": "Lockout",
+            "hide": 0,
+            "row": 3,
+        },
+        {
+            "action": {"base": 2},
+            "icon": "1402",
+            "col": 2,
+            "title": "Lockout",
+            "hide": 0,
+            "row": 3,
+        },
     ]
-    presets, light, auxiliary = _split_features(actions)
+    presets, toggles = _split_features(actions)
+    light, auxiliary, remote_control_lockout, phone_lockout = toggles
     assert presets == (
         PresetAction(command=5, label="Pet"),
         PresetAction(command=6, label="Parcel"),
@@ -132,6 +190,8 @@ def test_split_features_full_real_world_response() -> None:
     )
     assert light == ToggleState(command=16, is_on=False)
     assert auxiliary == ToggleState(command=18, is_on=False)
+    assert remote_control_lockout == ToggleState(command=20, is_on=False)
+    assert phone_lockout == ToggleState(command=258, is_on=False)
 
 
 def test_parse_activity_returns_none_for_empty_log() -> None:

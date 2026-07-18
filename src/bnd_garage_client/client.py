@@ -47,22 +47,50 @@ from .models import (
 from .transport import hub_ssl_context
 
 
+def _effective_command(action: dict[str, Any]) -> int | None:
+    """Resolve an aux-list entry's command, whatever field it's encoded in.
+
+    Codes >= 256 (e.g. the phone-lockout toggle) appear here as
+    `{"base": command - 256}` instead of `{"cmd": command}` - see
+    `_action_for_command`. Reversing that split lets every toggle slot be
+    matched against its `CMD_*` pair uniformly.
+    """
+    if "cmd" in action:
+        return action["cmd"]
+    if "base" in action:
+        return action["base"] + 256
+    return None
+
+
+_ToggleFields = tuple[
+    ToggleState | None, ToggleState | None, ToggleState | None, ToggleState | None
+]
+
+
 def _split_features(
     actions: list[dict[str, Any]],
-) -> tuple[tuple[PresetAction, ...], ToggleState | None, ToggleState | None]:
-    """Split the hub's feature list into position presets, the light toggle,
-    and the auxiliary relay toggle.
+) -> tuple[tuple[PresetAction, ...], _ToggleFields]:
+    """Split the hub's feature list into position presets and its toggle slots
+    (light, auxiliary relay, remote-control lockout, phone lockout).
 
-    The auxiliary relay showing no observable effect on earlier hubs tested
-    turned out to be a hub-side configuration issue (its output duration set
-    to 0 seconds), not the relay being genuinely unwired - it behaves like a
-    second light-style toggle once configured with a real duration.
+    All four are the same underlying mechanism: whichever command the hub
+    currently lists for a slot is the one that flips it to the opposite
+    state. The auxiliary relay showing no observable effect on earlier hubs
+    tested turned out to be a hub-side configuration issue (its output
+    duration set to 0 seconds), not the relay being genuinely unwired.
+    Both lockouts turned out to live here too, not in a separate `device`
+    field as first assumed - each appears as an aux-list entry titled
+    "Lockout", one encoded via "cmd" (remote-control) and one via "base"
+    (phone) - unrecognized, they'd otherwise leak through as meaningless
+    one-shot preset buttons.
     """
     presets: list[PresetAction] = []
     light: ToggleState | None = None
     auxiliary: ToggleState | None = None
+    remote_control_lockout: ToggleState | None = None
+    phone_lockout: ToggleState | None = None
     for action in actions:
-        command = action.get("action", {}).get("cmd")
+        command = _effective_command(action.get("action", {}))
         if command is None:
             continue
         if command in CMD_LIGHT_TOGGLE:
@@ -71,9 +99,17 @@ def _split_features(
             auxiliary = ToggleState(
                 command=command, is_on=command == CMD_AUXILIARY_RELAY[1]
             )
+        elif command in CMD_REMOTE_CONTROL_LOCKOUT:
+            remote_control_lockout = ToggleState(
+                command=command, is_on=command == CMD_REMOTE_CONTROL_LOCKOUT[1]
+            )
+        elif command in CMD_PHONE_LOCKOUT:
+            phone_lockout = ToggleState(
+                command=command, is_on=command == CMD_PHONE_LOCKOUT[1]
+            )
         else:
             presets.append(PresetAction(command=command, label=action.get("title", "")))
-    return tuple(presets), light, auxiliary
+    return tuple(presets), (light, auxiliary, remote_control_lockout, phone_lockout)
 
 
 def _parse_activity(log: dict[str, Any]) -> ActivityLogEntry | None:
@@ -230,7 +266,8 @@ class HubClient:
             if not devices:
                 continue
             device = devices[0].get("device", {})
-            presets, light, auxiliary = _split_features(devices[0].get("aux", []))
+            presets, toggles = _split_features(devices[0].get("aux", []))
+            light, auxiliary, remote_control_lockout, phone_lockout = toggles
             activity = _parse_activity(devices[0].get("log", {}))
             return status_from_raw(
                 position=device.get("position", -1),
@@ -240,8 +277,8 @@ class HubClient:
                 light=light,
                 auxiliary=auxiliary,
                 activity=activity,
-                remote_control_lockout=device.get("remoteControlLockoutOn"),
-                phone_lockout=device.get("phoneLockoutOn"),
+                remote_control_lockout=remote_control_lockout,
+                phone_lockout=phone_lockout,
             )
         return status_from_raw(position=-1, rate=0)
 
