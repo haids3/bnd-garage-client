@@ -71,8 +71,9 @@ async with aiohttp.ClientSession() as session:
 # Runtime control
 async with HubClient(HUB_IP, credentials) as client:
     await client.connect()
-    status = await client.get_status()
-    await client.open_door()
+    device_id = client.devices[0]  # a hub with multiple doors lists more than one
+    status = await client.get_status(device_id)
+    await client.open_door(device_id)
 ```
 
 ## Legacy vs SDK protocol

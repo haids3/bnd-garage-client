@@ -32,14 +32,14 @@ def _zero_iv_encrypt(secret: str, plaintext: str) -> str:
     return base64.b64encode(cipher.update(padded) + cipher.finalize()).decode()
 
 
-def _credentials(**overrides: str) -> Credentials:
-    base = {
+def _credentials(**overrides: object) -> Credentials:
+    base: dict[str, object] = {
         "hub_id": "hub1",
         "phone_id": "phone1",
         "phone_password": "pw",
         "control_secret": "control-secret",
         "user_password": "userpw",
-        "device_id": "dev1",
+        "devices": ("dev1",),
         "rsa_key_der_b64": "rsa-key",
         "sdk_secret": _SECRET,
         "sdk_phone_password": "sdk-pw",

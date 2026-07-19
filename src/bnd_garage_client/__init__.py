@@ -2,7 +2,6 @@
 
 from .client import HubClient
 from .errors import (
-    AmbiguousDeviceError,
     AuthenticationError,
     GarageError,
     HubCommandError,
@@ -23,7 +22,6 @@ from .sdk_client import SdkClient
 
 __all__ = [
     "ActivityLogEntry",
-    "AmbiguousDeviceError",
     "AuthenticationError",
     "Credentials",
     "DoorState",

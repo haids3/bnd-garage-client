@@ -30,16 +30,3 @@ class HubCommandError(GarageError):
 
 class PairingError(GarageError):
     """The one-time phone/device pairing flow failed."""
-
-
-class AmbiguousDeviceError(PairingError):
-    """Pairing found more than one controllable device on the hub.
-
-    `devices` lists (name, device_id) for each candidate found; the caller
-    should ask the user to pick one rather than guessing.
-    """
-
-    def __init__(self, devices: list[tuple[str, str]]) -> None:
-        """Initialize with the ambiguous set of discovered devices."""
-        super().__init__(f"found {len(devices)} devices, expected exactly one")
-        self.devices = devices

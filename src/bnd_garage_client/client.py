@@ -226,6 +226,16 @@ class HubClient:
         self._session_token = ""
         self._session_secret = ""
         self._session_established_at = 0.0
+        self._session_lock = asyncio.Lock()
+        """A hub with multiple devices shares one HubClient/session across
+        several concurrently-polling coordinators - this serializes access to
+        the mutable session-negotiation state above, which isn't safe for
+        concurrent use otherwise."""
+
+    @property
+    def devices(self) -> tuple[str, ...]:
+        """Every device ID this client's credentials have access to."""
+        return self._credentials.devices
 
     @property
     def _base_url(self) -> str:
@@ -253,11 +263,9 @@ class HubClient:
         """Establish a control-API session, validating the stored credentials."""
         await self._establish_session()
 
-    async def get_status(self) -> HubStatus:
-        """Fetch the hub's current status: door position/rate plus any features."""
-        request = json.dumps(
-            {"deviceId": self._credentials.device_id}, separators=(",", ":")
-        )
+    async def get_status(self, device_id: str) -> HubStatus:
+        """Fetch one device's current status: door position/rate plus any features."""
+        request = json.dumps({"deviceId": device_id}, separators=(",", ":"))
         for message in await self._call("app/res/devices/fetch", request):
             if message.get("processState") != 0:
                 continue
@@ -291,11 +299,9 @@ class HubClient:
             return _hub_info_from_raw(json.loads(message.get("data", "{}")))
         return None
 
-    async def get_device_logs(self) -> list[ActivityLogEntry]:
-        """Fetch the device's full log history (auto-close, faults, etc.)."""
-        request = json.dumps(
-            {"deviceId": self._credentials.device_id}, separators=(",", ":")
-        )
+    async def get_device_logs(self, device_id: str) -> list[ActivityLogEntry]:
+        """Fetch one device's full log history (auto-close, faults, etc.)."""
+        request = json.dumps({"deviceId": device_id}, separators=(",", ":"))
         for message in await self._call("app/res/log", request):
             if message.get("processState") != 0:
                 continue
@@ -313,8 +319,10 @@ class HubClient:
             return _parse_wifi_diagnostics(raw if isinstance(raw, list) else [])
         return []
 
-    async def set_advanced_parameter(self, code: int, value: int) -> None:
-        """Set one of the device's advanced parameters.
+    async def set_advanced_parameter(
+        self, device_id: str, code: int, value: int
+    ) -> None:
+        """Set one of a device's advanced parameters.
 
         `code` is one of the `PARAM_*` constants in const.py (e.g.
         `PARAM_AUTO_CLOSE_SEC`). The control API expects a differently-named
@@ -325,26 +333,26 @@ class HubClient:
         if field is None:
             raise ValueError(f"unknown advanced parameter code: {code}")
         request = json.dumps(
-            {"deviceId": self._credentials.device_id, field: value},
+            {"deviceId": device_id, field: value},
             separators=(",", ":"),
         )
         for message in await self._call("app/res/devices/edit", request):
             if message.get("processState") == -1:
                 _raise_for_error(message)
 
-    async def open_door(self) -> None:
+    async def open_door(self, device_id: str) -> None:
         """Open the garage door."""
-        await self.send_command(CMD_OPEN)
+        await self.send_command(device_id, CMD_OPEN)
 
-    async def close_door(self) -> None:
+    async def close_door(self, device_id: str) -> None:
         """Close the garage door."""
-        await self.send_command(CMD_CLOSE)
+        await self.send_command(device_id, CMD_CLOSE)
 
-    async def stop_door(self) -> None:
+    async def stop_door(self, device_id: str) -> None:
         """Stop the garage door mid-travel."""
-        await self.send_command(CMD_STOP)
+        await self.send_command(device_id, CMD_STOP)
 
-    async def set_open_percent(self, percent: int) -> None:
+    async def set_open_percent(self, device_id: str, percent: int) -> None:
         """Move the door to an exact percent-open position.
 
         `percent` must be a multiple of 5 between 5 and 95 inclusive - the
@@ -353,26 +361,26 @@ class HubClient:
         `openPercentageSupported` capability, which this method doesn't
         check itself (not currently surfaced on `HubStatus`).
         """
-        await self.send_command(_percent_open_command(percent))
+        await self.send_command(device_id, _percent_open_command(percent))
 
-    async def set_remote_control_lockout(self, enabled: bool) -> None:
+    async def set_remote_control_lockout(self, device_id: str, enabled: bool) -> None:
         """Enable/disable physical remotes and wall buttons.
 
         Live-tested: has no effect on app-protocol control either way.
         """
         await self.send_command(
-            CMD_REMOTE_CONTROL_LOCKOUT[0 if enabled else 1]
+            device_id, CMD_REMOTE_CONTROL_LOCKOUT[0 if enabled else 1]
         )
 
-    async def set_phone_lockout(self, enabled: bool) -> None:
+    async def set_phone_lockout(self, device_id: str, enabled: bool) -> None:
         """Enable/disable app-protocol control (open/close/stop/etc).
 
         Status reads keep working regardless. Live-tested: turning this
         back off is never itself blocked by the lockout.
         """
-        await self.send_command(CMD_PHONE_LOCKOUT[0 if enabled else 1])
+        await self.send_command(device_id, CMD_PHONE_LOCKOUT[0 if enabled else 1])
 
-    async def send_command(self, command: int) -> None:
+    async def send_command(self, device_id: str, command: int) -> None:
         """Send a raw command code - used for the light toggle and any preset.
 
         `command` values for presets/light come from a prior `get_status()`
@@ -384,7 +392,7 @@ class HubClient:
         """
         action = _action_for_command(command)
         request = json.dumps(
-            {"deviceId": self._credentials.device_id, "action": action},
+            {"deviceId": device_id, "action": action},
             separators=(",", ":"),
         )
         messages = await self._call("app/res/action", request)
@@ -457,53 +465,59 @@ class HubClient:
         return self._session_token, self._session_secret
 
     async def _call(self, endpoint: str, request_json: str) -> list[dict[str, Any]]:
-        """POST an encrypted, signed request; retry once if the session was rejected."""
-        secret = self._credentials.control_secret
+        """POST an encrypted, signed request; retry once if the session was rejected.
 
-        for attempt_is_retry in (False, True):
-            session_token, session_secret = await self._active_session()
-            timestamp = int(time.time() * 1000)
-            encrypted = encrypt_control(secret, str(timestamp), request_json)
-            signing_input = f"{timestamp}:{encrypted}"
-            body = {
-                "bsid": self._credentials.hub_id,
-                "sessionId": session_token,
-                "time": timestamp,
-                "data": encrypted,
-                "processId": "0",
-                "sessionSig": sign_hmac(session_secret, signing_input),
-                "phoneSig": sign_hmac(secret, signing_input),
-                "isEncrypted": True,
-            }
-            try:
-                async with self._http.post(
-                    f"{self._base_url}/{endpoint}",
-                    headers=CONTROL_HEADERS,
-                    json=body,
-                    timeout=aiohttp.ClientTimeout(total=15),
-                ) as response:
-                    if response.status == 403 and not attempt_is_retry:
-                        self._session_token = ""
-                        self._session_established_at = 0.0
-                        continue
-                    if response.status != 200:
-                        body_text = await response.text()
-                        raise HubUnreachableError(
-                            f"{endpoint} HTTP {response.status}: {body_text[:120]}"
-                        )
-                    reply = await response.json(content_type=None)
-            except TimeoutError as err:
-                raise HubUnreachableError(f"timed out calling {endpoint}") from err
-            except aiohttp.ClientError as err:
-                raise HubUnreachableError(
-                    f"could not reach hub at {self._host}: {err}"
-                ) from err
+        Serialized by `_session_lock` - a multi-device hub shares this one
+        client/session across several coordinators that poll independently,
+        and the session-negotiation state above isn't safe for concurrent use.
+        """
+        async with self._session_lock:
+            secret = self._credentials.control_secret
 
-            return json.loads(reply.get("messages", "[]"))
+            for attempt_is_retry in (False, True):
+                session_token, session_secret = await self._active_session()
+                timestamp = int(time.time() * 1000)
+                encrypted = encrypt_control(secret, str(timestamp), request_json)
+                signing_input = f"{timestamp}:{encrypted}"
+                body = {
+                    "bsid": self._credentials.hub_id,
+                    "sessionId": session_token,
+                    "time": timestamp,
+                    "data": encrypted,
+                    "processId": "0",
+                    "sessionSig": sign_hmac(session_secret, signing_input),
+                    "phoneSig": sign_hmac(secret, signing_input),
+                    "isEncrypted": True,
+                }
+                try:
+                    async with self._http.post(
+                        f"{self._base_url}/{endpoint}",
+                        headers=CONTROL_HEADERS,
+                        json=body,
+                        timeout=aiohttp.ClientTimeout(total=15),
+                    ) as response:
+                        if response.status == 403 and not attempt_is_retry:
+                            self._session_token = ""
+                            self._session_established_at = 0.0
+                            continue
+                        if response.status != 200:
+                            body_text = await response.text()
+                            raise HubUnreachableError(
+                                f"{endpoint} HTTP {response.status}: {body_text[:120]}"
+                            )
+                        reply = await response.json(content_type=None)
+                except TimeoutError as err:
+                    raise HubUnreachableError(f"timed out calling {endpoint}") from err
+                except aiohttp.ClientError as err:
+                    raise HubUnreachableError(
+                        f"could not reach hub at {self._host}: {err}"
+                    ) from err
 
-        raise AuthenticationError(
-            f"{endpoint} rejected even after re-establishing a session"
-        )
+                return json.loads(reply.get("messages", "[]"))
+
+            raise AuthenticationError(
+                f"{endpoint} rejected even after re-establishing a session"
+            )
 
 
 def _raise_for_error(message: dict[str, Any]) -> None:

@@ -25,12 +25,7 @@ from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from cryptography.hazmat.primitives.asymmetric import padding as rsa_padding
 
 from .crypto import decrypt_control, decrypt_pairing_reply, encrypt_control, sign_hmac
-from .errors import (
-    AmbiguousDeviceError,
-    AuthenticationError,
-    HubUnreachableError,
-    PairingError,
-)
+from .errors import AuthenticationError, HubUnreachableError, PairingError
 from .models import Credentials
 from .sdk_protocol import SdkConnection, try_signing_keys
 from .transport import hub_ssl_context, read_hub_id
@@ -110,21 +105,21 @@ class PairingSession:
             control_secret, phone_password, user_password, pairing_password
         )
 
-        session_key, device_id = await self._authenticate_pairing_session(
+        session_key, device_ids = await self._authenticate_pairing_session(
             migrated, user_password, pairing_password
         )
         if session_key:
             _cleared, discovered = await self._clear_password_expiry(
                 migrated, session_key, user_password, user_id, pairing_password
             )
-            device_id = device_id or discovered
+            device_ids = device_ids or discovered
 
-        if not device_id:
-            device_id = await self._discover_device_id(
+        if not device_ids:
+            device_ids = await self._discover_device_ids(
                 phone_password, user_password, control_secret
             )
-        if not device_id:
-            raise PairingError("could not determine this hub's controllable device ID")
+        if not device_ids:
+            raise PairingError("could not determine this hub's controllable device IDs")
 
         return Credentials(
             hub_id=self.hub_id,
@@ -132,7 +127,7 @@ class PairingSession:
             phone_password=phone_password,
             control_secret=control_secret,
             user_password=user_password,
-            device_id=device_id,
+            devices=device_ids,
             rsa_key_der_b64=migrated.private_key_der_b64,
             sdk_phone_password=pairing_password,
             sdk_secret=migrated.secret,
@@ -319,7 +314,7 @@ class PairingSession:
 
     async def _authenticate_pairing_session(
         self, migrated: _MigratedSecret, user_password: str, pairing_password: str
-    ) -> tuple[str | None, str | None]:
+    ) -> tuple[str | None, tuple[str, ...]]:
         command = json.dumps(
             {
                 "path": "auth",
@@ -345,7 +340,7 @@ class PairingSession:
         user_password: str,
         user_id: str,
         pairing_password: str,
-    ) -> tuple[bool, str | None]:
+    ) -> tuple[bool, tuple[str, ...]]:
         """Clear the hub's "password expired" flag for this user.
 
         The vendor app forces a password change on first login otherwise;
@@ -365,13 +360,13 @@ class PairingSession:
         )
         decoded = _decode_pairing_reply(reply, migrated.secret)
         if decoded.get("errorCode") == 0:
-            return True, _device_id_from_payload(decoded)
-        return False, None
+            return True, _device_ids_from_payload(decoded)
+        return False, ()
 
-    async def _discover_device_id(
+    async def _discover_device_ids(
         self, phone_password: str, user_password: str, control_secret: str
-    ) -> str | None:
-        """Falls back to listing devices when nothing else yielded a device id."""
+    ) -> tuple[str, ...]:
+        """Falls back to listing devices when nothing else yielded device ids."""
         try:
             async with self._session.post(
                 f"{self._url(_CONTROL_PORT)}/app/connect",
@@ -386,10 +381,10 @@ class PairingSession:
                 },
             ) as response:
                 if response.status != 200:
-                    return None
+                    return ()
                 connection = await response.json(content_type=None)
         except (TimeoutError, aiohttp.ClientError):
-            return None
+            return ()
 
         timestamp = int(time.time() * 1000)
         encrypted = encrypt_control(control_secret, str(timestamp), "{}")
@@ -412,14 +407,14 @@ class PairingSession:
                 },
             ) as response:
                 if response.status != 200:
-                    return None
+                    return ()
                 messages = json.loads(
                     (await response.json(content_type=None)).get("messages", "[]")
                 )
         except (TimeoutError, aiohttp.ClientError, ValueError):
-            return None
+            return ()
 
-        found: list[tuple[str, str]] = []
+        found: list[str] = []
         for message in messages:
             if message.get("processState") != 0:
                 continue
@@ -429,28 +424,23 @@ class PairingSession:
                 continue
             for entry in body.get("devices", []):
                 device = entry.get("device", {})
-                name = entry.get("name") or device.get("name", "")
                 device_id = (
                     entry.get("deviceId") or device.get("deviceId") or device.get("id")
                 )
                 if device_id:
-                    found.append((name, str(device_id)))
+                    found.append(str(device_id))
 
-        if not found:
-            return None
-        if len(found) > 1:
-            raise AmbiguousDeviceError(found)
-        return found[0][1]
+        return tuple(found)
 
 
-def _device_id_from_payload(data: dict) -> str | None:
+def _device_ids_from_payload(data: dict) -> tuple[str, ...]:
     """The device permissions map is keyed by device ID, e.g. {"cWepe5Rn": {...}}."""
     permissions = data.get("devicePermissions") or (data.get("data") or {}).get(
         "devicePermissions"
     )
-    if isinstance(permissions, dict) and permissions:
-        return next(iter(permissions))
-    return None
+    if isinstance(permissions, dict):
+        return tuple(permissions)
+    return ()
 
 
 def _decode_pairing_reply(reply: dict, secret: str) -> dict:
@@ -486,39 +476,41 @@ def _decode_pairing_reply(reply: dict, secret: str) -> dict:
     return salvaged or {"_raw": raw}
 
 
-def _extract_session_key(reply: dict, secret: str) -> tuple[str | None, str | None]:
+def _extract_session_key(
+    reply: dict, secret: str
+) -> tuple[str | None, tuple[str, ...]]:
     raw = reply.get("response", "")
     if not raw:
-        return None, None
+        return None, ()
 
-    def _scan(data: dict) -> tuple[str | None, str | None]:
+    def _scan(data: dict) -> tuple[str | None, tuple[str, ...]]:
         key = data.get("key") or (data.get("data") or {}).get("key")
-        return key or None, _device_id_from_payload(data)
+        return key or None, _device_ids_from_payload(data)
 
     try:
-        key, device_id = _scan(json.loads(raw))
+        key, device_ids = _scan(json.loads(raw))
         if key:
-            return key, device_id
+            return key, device_ids
     except ValueError:
         pass
 
     try:
         text = decrypt_pairing_reply(secret, raw)
     except (ValueError, TypeError):
-        return None, None
+        return None, ()
 
     try:
-        key, device_id = _scan(json.loads(text))
+        key, device_ids = _scan(json.loads(text))
         if key:
-            return key, device_id
+            return key, device_ids
     except ValueError:
         pass
 
     key_match = re.search(r'"key"\s*:\s*"([^"]+)"', text)
     device_match = re.search(r'"devicePermissions"\s*:\s*\{"([^"]+)"', text)
     if key_match:
-        return key_match.group(1), (device_match.group(1) if device_match else None)
-    return None, None
+        return key_match.group(1), ((device_match.group(1),) if device_match else ())
+    return None, ()
 
 
 async def pair_new_phone(

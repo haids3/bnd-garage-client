@@ -29,7 +29,10 @@ class Credentials:
     makes the hub reject every call with a generic security error.
     """
     user_password: str
-    device_id: str
+    devices: tuple[str, ...]
+    """Every device ID this phone has access to under the paired hub - a hub
+    with multiple door openers grants one set of credentials control over
+    all of them, distinguished per-call by which device ID is passed."""
     rsa_key_der_b64: str = ""
     """Base64 PKCS8 DER-encoded RSA private key registered with the hub
     during pairing's key-upgrade step. Required to sign any SDK-protocol
