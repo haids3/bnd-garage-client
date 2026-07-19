@@ -18,9 +18,7 @@ implementation written from an understanding of that documented protocol,
 not a copy or port of their code.
 
 **This project's own research since** has substantially expanded on that
-foundation through its own APK decompilation, live-hardware testing, and (for
-one specific finding) independent smali/bytecode disassembly - none of it
-sourced from THE-MAVER1CK's work:
+foundation through its own APK decompilation, and live-hardware testing.
 
 - The entire SDK-protocol RPC catalog (~80 actions spanning notifications,
   multi-user management, cameras, remote controls, integrations, and hub
@@ -28,18 +26,13 @@ sourced from THE-MAVER1CK's work:
   legacy control API.
 - The legacy control API's own further actions beyond open/close/stop: hub
   info, device activity logs, WiFi diagnostics, exact-percentage
-  positioning, and both lockout toggles.
-- Corrections to what static analysis alone suggested, found only by
-  testing against real hardware: the auxiliary relay is a real, usable
-  toggle rather than permanently inert as it first appeared; both lockouts
-  are exposed via the same aux-list toggle-slot mechanism as the light, not
-  a separate status field as first assumed; and a genuine vendor-app bug in
-  the legacy protocol's `setDevicePartOpenAlias` action, confirmed at the
-  raw bytecode level rather than merely suspected from decompiled Java.
+  positioning, light/auxilary toggles and both lockout toggles.
+- A genuine vendor-app bug in the legacy protocol's `setDevicePartOpenAlias`
+  action, confirmed at the raw bytecode level rather than merely suspected
+  from decompiled Java.
 
 This is a derivative work in its foundations - full credit to THE-MAVER1CK
-for making it possible at all - but not in everything built on top of them
-since.
+for making it possible at all.
 
 ## Status
 
