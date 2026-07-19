@@ -29,7 +29,7 @@ genuinely unreachable over this protocol at any hub/firmware version.
 | Action | Endpoint | Request body | Implemented here |
 |---|---|---|---|
 | Get one device | `app/res/devices/fetch` | `{deviceId}` | `get_status()` |
-| Get all devices | `app/res/devices/fetch` | `{}` | no |
+| Get all devices | `app/res/devices/fetch` | `{}` | `get_device_ids()` |
 | Send device command | `app/res/action` | `{deviceId, action: {cmd: N}}`, or `{action: {base: N-256}}` if `N >= 256` | `send_command()` and its wrappers (below) |
 | Get hub info | `app/res/base/info` | `{}` | `get_hub_info()` |
 | Set hub name | `app/res/base/edit` | `{name}` | no |

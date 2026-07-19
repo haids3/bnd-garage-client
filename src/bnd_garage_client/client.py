@@ -290,6 +290,29 @@ class HubClient:
             )
         return status_from_raw(position=-1, rate=0)
 
+    async def get_device_ids(self) -> tuple[str, ...]:
+        """Fetch every device ID this phone currently has access to on the hub.
+
+        Unlike `get_status`, which fetches one device by its ID, this uses
+        the same endpoint with an empty request body to enumerate all of
+        them - used to detect a device added to the hub after pairing.
+        """
+        request = json.dumps({}, separators=(",", ":"))
+        for message in await self._call("app/res/devices/fetch", request):
+            if message.get("processState") != 0:
+                continue
+            body = json.loads(message.get("data", "{}"))
+            found: list[str] = []
+            for entry in body.get("devices", []):
+                device = entry.get("device", {})
+                device_id = (
+                    entry.get("deviceId") or device.get("deviceId") or device.get("id")
+                )
+                if device_id:
+                    found.append(str(device_id))
+            return tuple(found)
+        return ()
+
     async def get_hub_info(self) -> HubInfo | None:
         """Fetch the hub's own identity/network info (name, firmware, WiFi, ...)."""
         request = json.dumps({}, separators=(",", ":"))
